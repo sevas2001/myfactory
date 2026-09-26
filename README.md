@@ -12,6 +12,9 @@ Repositorio central para skills, agentes y configuraciones de desarrollo en Anti
 - **`blender-game-skills/`**: Skills especializadas para modelado, conversión de imágenes a 3D, texturizado y validación para motores de videojuegos con Blender.  
   *Origen:* [majidmanzarpour/blender-game-skills](https://github.com/majidmanzarpour/blender-game-skills)
 
+- **`ideas/`**: Conceptos, notas de investigación y flujos de trabajo en proceso para futuras skills.
+  - [`pipeline-krea-trellis-godot.md`](ideas/pipeline-krea-trellis-godot.md): Creación de modelos 3D y juegos en Godot con Krea (TRELLIS 2) y agentes LLM sin Blender.
+
 ---
 
 ## Uso
