@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pixel Art Wizard - Canvas 2D</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05050d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas#display {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="display"></canvas>
+
+  <script>
+    // --- SPECIFICATION CONSTANTS ---
+    const LOGICAL_WIDTH = 128;
+    const LOGICAL_HEIGHT = 96;
+
+    // Fixed 24-color palette
+    const PALETTE = {
+      // Night sky & background (1-5)
+      VOID: '#06060e',
+      NIGHT_1: '#0d1021',
+      NIGHT_2: '#161936',
+      NIGHT_3: '#232752',
+      NIGHT_4: '#363c75',
+      // Moon & celestial (6-8)
+      MOON_BRIGHT: '#fff7d6',
+      MOON_MID: '#d6c890',
+      STAR: '#b5cff5',
+      // Floor / Stone (9-11)
+      STONE_DARK: '#191924',
+      STONE_MID: '#2d2e3d',
+      STONE_LIGHT: '#44465c',
+      // Warm Robe & Hat (12-15)
+      ROBE_OUTLINE: '#210e0c',
+      ROBE_DARK: '#471c17',
+      ROBE_MID: '#7a2f26',
+      ROBE_LIGHT: '#b8493a',
+      // Skin & Beard (16-18)
+      SKIN: '#f2b591',
+      BEARD_LIGHT: '#e1e7f0',
+      BEARD_SHADOW: '#919db0',
+      // Staff / Wood (19-20)
+      WOOD_DARK: '#2e190e',
+      WOOD_LIGHT: '#57331c',
+      // Magic Colors (21-24)
+      MAGIC_WHITE: '#ffffff',
+      MAGIC_CYAN: '#38f5f2',
+      MAGIC_BLUE: '#2888f7',
+      MAGIC_PURPLE: '#8b3cf7'
+    };
+
+    // --- CANVASES SETUP ---
+    const displayCanvas = document.getElementById('display');
+    const displayCtx = displayCanvas.getContext('2d');
+
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = LOGICAL_WIDTH;
+    offscreenCanvas.height = LOGICAL_HEIGHT;
+    const ctx = offscreenCanvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    let displayScale = 1;
+
+    function resizeDisplay() {
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const scaleX = Math.floor(windowWidth / LOGICAL_WIDTH);
+      const scaleY = Math.floor(windowHeight / LOGICAL_HEIGHT);
+      displayScale = Math.max(1, Math.min(scaleX, scaleY));
+
+      displayCanvas.width = LOGICAL_WIDTH * displayScale;
+      displayCanvas.height = LOGICAL_HEIGHT * displayScale;
+
+      displayCtx.imageSmoothingEnabled = false;
+    }
+    window.addEventListener('resize', resizeDisplay);
+    resizeDisplay();
+
+    // --- FAST PIXEL PRIMITIVES (Integer Snapped) ---
+    function drawRect(color, x, y, w, h) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+    }
+
+    function drawPixel(color, x, y) {
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+    }
+
+    // --- PRE-ALLOCATED PARTICLE SYSTEM ---
+    const MAX_PARTICLES = 120;
+    const particles = new Float32Array(MAX_PARTICLES * 6); // [active, x, y, vx, vy, life]
+    const PARTICLE_STRIDE = 6;
+
+    function resetParticles() {
+      particles.fill(0);
+    }
+
+    function spawnParticle(x, y, vx, vy, maxLife) {
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        const offset = i * PARTICLE_STRIDE;
+        if (particles[offset] === 0) {
+          particles[offset] = 1;      // active
+          particles[offset + 1] = x;
+          particles[offset + 2] = y;
+          particles[offset + 3] = vx;
+          particles[offset + 4] = vy;
+          particles[offset + 5] = maxLife;
+          return;
+        }
+      }
+    }
+
+    function updateAndDrawParticles() {
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        const offset = i * PARTICLE_STRIDE;
+        if (particles[offset] === 1) {
+          particles[offset + 1] += particles[offset + 3]; // x += vx
+          particles[offset + 2] += particles[offset + 4]; // y += vy
+          particles[offset + 5] -= 1;                    // life--
+
+          const life = particles[offset + 5];
+          if (life <= 0) {
+            particles[offset] = 0;
+            continue;
+          }
+
+          // Step palette index from white -> cyan -> blue -> purple
+          let color = PALETTE.MAGIC_PURPLE;
+          if (life > 28) color = PALETTE.MAGIC_WHITE;
+          else if (life > 18) color = PALETTE.MAGIC_CYAN;
+          else if (life > 8) color = PALETTE.MAGIC_BLUE;
+
+          drawPixel(color, particles[offset + 1], particles[offset + 2]);
+        }
+      }
+    }
+
+    // --- PROJECTILE OBJECT (Fixed state) ---
+    const projectile = {
+      active: false,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      life: 0
+    };
+
+    // --- STARS (Static array) ---
+    const STARS = [
+      {x: 12, y: 14, twinkleOffset: 0},
+      {x: 28, y: 22, twinkleOffset: 12},
+      {x: 45, y: 10, twinkleOffset: 34},
+      {x: 68, y: 18, twinkleOffset: 45},
+      {x: 82, y: 8,  twinkleOffset: 20},
+      {x: 95, y: 25, twinkleOffset: 50},
+      {x: 115,y: 15, twinkleOffset: 5},
+      {x: 104,y: 36, twinkleOffset: 30},
+      {x: 18, y: 38, twinkleOffset: 18}
+    ];
+
+    // --- STATE MACHINE ---
+    const STATE_IDLE = 0;
+    const STATE_CHARGE = 1;
+    const STATE_CAST = 2;
+    const STATE_RECOVER = 3;
+
+    let currentState = STATE_IDLE;
+    let stateTimer = 0;
+    let screenShake = 0;
+
+    // Durations in 60Hz ticks
+    const DUR_IDLE = 90;
+    const DUR_CHARGE = 80;
+    const DUR_CAST = 35;
+    const DUR_RECOVER = 45;
+
+    // Wizard Pose parameters
+    let bobY = 0;
+    let beardSway = 0;
+    let staffAngle = 0; // 0 (rest) to 1 (raised)
+    let armRaise = 0;
+    let headTilt = 0;
+    let rimLightIntensity = 0;
+
+    // Quantized 10fps clock for pixel animation feel
+    let quantizeTick = 0;
+    let qBobY = 0;
+    let qBeardSway = 0;
+    let qStaffRaised = 0;
+    let qArmRaise = 0;
+
+    function update() {
+      stateTimer++;
+      quantizeTick++;
+
+      // Screen shake decay
+      if (screenShake > 0) screenShake--;
+
+      // State machine logic
+      switch (currentState) {
+        case STATE_IDLE:
+          // 2-frame bob, beard sway
+          bobY = Math.sin(stateTimer * 0.08) * 0.9;
+          beardSway = Math.sin(stateTimer * 0.1) * 0.8;
+          staffAngle = 0;
+          armRaise = 0;
+          headTilt = 0;
+          rimLightIntensity = 0;
+
+          if (stateTimer >= DUR_IDLE) {
+            currentState = STATE_CHARGE;
+            stateTimer = 0;
+          }
+          break;
+
+        case STATE_CHARGE:
+          // Staff raises, gem flickers, sparks spiral inward
+          const chargeProgress = Math.min(1, stateTimer / (DUR_CHARGE * 0.7));
+          staffAngle = chargeProgress;
+          armRaise = chargeProgress;
+          headTilt = chargeProgress * 0.5;
+          bobY = -chargeProgress * 0.8;
+          beardSway = Math.sin(stateTimer * 0.25) * 1.2;
+          rimLightIntensity = 0.4 + (stateTimer % 4 < 2 ? 0.3 : 0);
+
+          // Spiral sparks inward to the gem
+          if (stateTimer % 3 === 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 14 + Math.random() * 8;
+            const gemX = 58;
+            const gemY = 40;
+            const sx = gemX + Math.cos(angle) * dist;
+            const sy = gemY + Math.sin(angle) * dist;
+            const speed = 0.75;
+            spawnParticle(sx, sy, -Math.cos(angle) * speed, -Math.sin(angle) * speed, 24);
+          }
+
+          if (stateTimer >= DUR_CHARGE) {
+            currentState = STATE_CAST;
+            stateTimer = 0;
+
+            // Trigger burst & screen shake
+            screenShake = 6;
+            rimLightIntensity = 1.0;
+
+            // Fire projectile
+            projectile.active = true;
+            projectile.x = 60;
+            projectile.y = 40;
+            projectile.vx = 2.4;
+            projectile.vy = -0.15;
+            projectile.life = 45;
+
+            // Explode outward sparks
+            for (let i = 0; i < 28; i++) {
+              const ang = (Math.PI * 2 * i) / 28 + (Math.random() * 0.2);
+              const spd = 0.8 + Math.random() * 1.4;
+              spawnParticle(60, 40, Math.cos(ang) * spd, Math.sin(ang) * spd, 22 + Math.floor(Math.random() * 14));
+            }
+          }
+          break;
+
+        case STATE_CAST:
+          staffAngle = 1.1;
+          armRaise = 1.1;
+          headTilt = -0.3;
+          bobY = -1.2;
+          rimLightIntensity = Math.max(0, 1 - (stateTimer / DUR_CAST));
+
+          // Projectile trail
+          if (projectile.active) {
+            projectile.x += projectile.vx;
+            projectile.y += projectile.vy;
+            projectile.life--;
+            if (projectile.life % 2 === 0) {
+              spawnParticle(projectile.x, projectile.y, -0.4, (Math.random() - 0.5) * 0.5, 16);
+            }
+            if (projectile.life <= 0 || projectile.x > LOGICAL_WIDTH + 8) {
+              projectile.active = false;
+            }
+          }
+
+          if (stateTimer >= DUR_CAST) {
+            currentState = STATE_RECOVER;
+            stateTimer = 0;
+          }
+          break;
+
+        case STATE_RECOVER:
+          // Settle back smoothly
+          const recoverT = stateTimer / DUR_RECOVER;
+          staffAngle = (1 - recoverT);
+          armRaise = (1 - recoverT);
+          headTilt = (1 - recoverT) * -0.2;
+          bobY = (1 - recoverT) * -0.5;
+          beardSway = Math.sin(stateTimer * 0.15) * (1 - recoverT);
+          rimLightIntensity = 0;
+
+          if (stateTimer >= DUR_RECOVER) {
+            currentState = STATE_IDLE;
+            stateTimer = 0;
+          }
+          break;
+      }
+
+      // Quantize to ~10 fps (every 6 frames at 60Hz) for authentic retro sprite animation feel
+      if (quantizeTick % 6 === 0) {
+        qBobY = Math.round(bobY);
+        qBeardSway = Math.round(beardSway);
+        qStaffRaised = staffAngle > 0.4 ? 1 : 0;
+        qArmRaise = armRaise > 0.5 ? 1 : 0;
+      }
+    }
+
+    // --- DRAWING ROUTINES ---
+    function render() {
+      // 1-2px screen shake offset
+      let shakeX = 0;
+      let shakeY = 0;
+      if (screenShake > 0) {
+        shakeX = (screenShake % 2 === 0 ? 1 : -1) * (screenShake > 3 ? 2 : 1);
+        shakeY = (screenShake % 3 === 0 ? -1 : 1);
+      }
+
+      // Clear offscreen
+      drawRect(PALETTE.VOID, 0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+      // --- SCENE BACKGROUND ---
+      // Sky gradient blocks (dithered style)
+      drawRect(PALETTE.NIGHT_1, 0, 0, LOGICAL_WIDTH, 48);
+      drawRect(PALETTE.NIGHT_2, 0, 48, LOGICAL_WIDTH, 26);
+      drawRect(PALETTE.NIGHT_3, 0, 74, LOGICAL_WIDTH, 8);
+
+      // Moon
+      const moonX = 100;
+      const moonY = 16;
+      drawRect(PALETTE.MOON_MID, moonX + 2, moonY, 6, 10);
+      drawRect(PALETTE.MOON_MID, moonX, moonY + 2, 10, 6);
+      drawRect(PALETTE.MOON_BRIGHT, moonX + 3, moonY + 1, 4, 8);
+      drawRect(PALETTE.MOON_BRIGHT, moonX + 1, moonY + 3, 8, 4);
+
+      // Stars (Twinkling)
+      for (let i = 0; i < STARS.length; i++) {
+        const star = STARS[i];
+        const isBright = ((stateTimer + star.twinkleOffset) % 40) > 18;
+        if (isBright) {
+          drawPixel(PALETTE.STAR, star.x, star.y);
+        }
+      }
+
+      // Stone floor
+      const groundY = 82;
+      drawRect(PALETTE.STONE_LIGHT, 0, groundY, LOGICAL_WIDTH, 1);
+      drawRect(PALETTE.STONE_MID, 0, groundY + 1, LOGICAL_WIDTH, 5);
+      drawRect(PALETTE.STONE_DARK, 0, groundY + 6, LOGICAL_WIDTH, LOGICAL_HEIGHT - (groundY + 6));
+      // Floor stone cracks/details
+      drawPixel(PALETTE.STONE_LIGHT, 24, groundY + 2);
+      drawPixel(PALETTE.STONE_DARK, 25, groundY + 2);
+      drawPixel(PALETTE.STONE_LIGHT, 70, groundY + 3);
+      drawPixel(PALETTE.STONE_DARK, 71, groundY + 3);
+      drawPixel(PALETTE.STONE_LIGHT, 105, groundY + 2);
+
+      // --- PROCEDURAL WIZARD (24x32 logical pixels) ---
+      // Origin base: x=38, y=52
+      const bx = 38 + shakeX;
+      const by = 52 + qBobY + shakeY;
+
+      // 1. Shadow beneath wizard
+      drawRect(PALETTE.STONE_DARK, bx + 2, groundY - 1, 16, 2);
+
+      // 2. Robe Body (two-shade with outline)
+      // Outline
+      drawRect(PALETTE.ROBE_OUTLINE, bx + 3, by + 13, 14, 17);
+      drawRect(PALETTE.ROBE_OUTLINE, bx + 1, by + 18, 18, 12);
+      // Dark tone robe
+      drawRect(PALETTE.ROBE_DARK, bx + 4, by + 14, 12, 15);
+      drawRect(PALETTE.ROBE_DARK, bx + 2, by + 19, 16, 10);
+      // Light tone robe highlights
+      drawRect(PALETTE.ROBE_MID, bx + 5, by + 15, 6, 13);
+      drawRect(PALETTE.ROBE_LIGHT, bx + 6, by + 17, 3, 9);
+
+      // 3. Face & Beard
+      // Face skin
+      drawRect(PALETTE.SKIN, bx + 7, by + 8, 5, 4);
+      // Eye
+      drawPixel(PALETTE.VOID, bx + 10, by + 9);
+      // Beard (with sway & shading)
+      const sway = qBeardSway;
+      drawRect(PALETTE.BEARD_SHADOW, bx + 6, by + 12, 6, 9);
+      drawRect(PALETTE.BEARD_LIGHT, bx + 6 + sway, by + 12, 5, 7);
+      drawRect(PALETTE.BEARD_LIGHT, bx + 7 + sway, by + 19, 3, 3);
+      drawPixel(PALETTE.BEARD_LIGHT, bx + 8 + sway, by + 22);
+
+      // 4. Wizard Hat (Pointed with bend)
+      // Hat Brim
+      drawRect(PALETTE.ROBE_OUTLINE, bx + 2, by + 7, 14, 2);
+      drawRect(PALETTE.ROBE_DARK, bx + 3, by + 7, 12, 1);
+      drawRect(PALETTE.ROBE_LIGHT, bx + 5, by + 7, 6, 1);
+      // Hat Cone
+      drawRect(PALETTE.ROBE_OUTLINE, bx + 4, by + 2, 9, 5);
+      drawRect(PALETTE.ROBE_MID, bx + 5, by + 3, 7, 4);
+      drawRect(PALETTE.ROBE_LIGHT, bx + 6, by + 4, 3, 3);
+      // Hat Point & Bend
+      drawRect(PALETTE.ROBE_OUTLINE, bx + 3, by - 1, 5, 3);
+      drawRect(PALETTE.ROBE_MID, bx + 4, by, 3, 2);
+      drawPixel(PALETTE.ROBE_OUTLINE, bx + 2, by - 2); // bent tip
+
+      // 5. Arm & Staff
+      if (qStaffRaised === 0) {
+        // Idle staff pose (resting forward)
+        drawRect(PALETTE.ROBE_MID, bx + 11, by + 15, 3, 4); // sleeve
+        drawPixel(PALETTE.SKIN, bx + 13, by + 17);         // hand
+        // Wooden staff
+        drawRect(PALETTE.WOOD_DARK, bx + 14, by + 6, 2, 24);
+        drawRect(PALETTE.WOOD_LIGHT, bx + 14, by + 7, 1, 22);
+        // Gem on tip
+        drawRect(PALETTE.MAGIC_BLUE, bx + 13, by + 3, 4, 4);
+        drawPixel(PALETTE.MAGIC_CYAN, bx + 14, by + 4);
+      } else {
+        // Casting/Charge staff pose (raised forward-upward)
+        drawRect(PALETTE.ROBE_MID, bx + 11, by + 12, 4, 4); // raised sleeve
+        drawPixel(PALETTE.SKIN, bx + 14, by + 11);         // hand
+        // Angled staff
+        drawRect(PALETTE.WOOD_DARK, bx + 15, by - 2, 2, 28);
+        drawRect(PALETTE.WOOD_LIGHT, bx + 15, by - 1, 1, 26);
+        // Gem on raised tip
+        const gemX = bx + 14;
+        const gemY = by - 6;
+        drawRect(PALETTE.MAGIC_BLUE, gemX, gemY, 4, 5);
+        drawRect(PALETTE.MAGIC_CYAN, gemX + 1, gemY + 1, 2, 3);
+        drawPixel(PALETTE.MAGIC_WHITE, gemX + 1, gemY + 1);
+
+        // Gem glow flare during charge/cast
+        if (rimLightIntensity > 0.4) {
+          drawPixel(PALETTE.MAGIC_WHITE, gemX - 1, gemY + 2);
+          drawPixel(PALETTE.MAGIC_WHITE, gemX + 4, gemY + 2);
+          drawPixel(PALETTE.MAGIC_CYAN, gemX + 1, gemY - 1);
+          drawPixel(PALETTE.MAGIC_CYAN, gemX + 1, gemY + 5);
+        }
+      }
+
+      // 6. Subtle Rim Lighting on Wizard silhouette from Gem
+      if (rimLightIntensity > 0.2) {
+        drawPixel(PALETTE.MAGIC_CYAN, bx + 12, by + 8);  // face rim
+        drawPixel(PALETTE.MAGIC_BLUE, bx + 11, by + 13); // hat edge
+        if (rimLightIntensity > 0.7) {
+          drawPixel(PALETTE.MAGIC_WHITE, bx + 10, by + 7);
+          drawPixel(PALETTE.MAGIC_CYAN, bx + 13, by + 19);
+        }
+      }
+
+      // --- PROJECTILE RENDERING ---
+      if (projectile.active) {
+        const px = Math.floor(projectile.x);
+        const py = Math.floor(projectile.y);
+        drawRect(PALETTE.MAGIC_WHITE, px, py, 4, 3);
+        drawRect(PALETTE.MAGIC_CYAN, px - 2, py + 1, 2, 1);
+        drawRect(PALETTE.MAGIC_BLUE, px - 4, py + 1, 2, 1);
+        drawPixel(PALETTE.MAGIC_CYAN, px + 1, py - 1);
+        drawPixel(PALETTE.MAGIC_CYAN, px + 1, py + 3);
+      }
+
+      // --- PARTICLES ---
+      updateAndDrawParticles();
+
+      // --- BLIT OFFSCREEN CANVAS TO DISPLAY CANVAS (Integer Scaled & Centered) ---
+      displayCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+      displayCtx.drawImage(
+        offscreenCanvas,
+        0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT,
+        0, 0, displayCanvas.width, displayCanvas.height
+      );
+    }
+
+    // --- 60Hz TIMESTEP LOOP (Zero Allocation) ---
+    function loop() {
+      update();
+      render();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

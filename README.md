@@ -25,6 +25,8 @@ Repositorio central y "fábrica" de recursos para **skills**, **agentes autónom
 
 | Carpeta / Archivo | Propósito y Contenido |
 | :--- | :--- |
+| **[`skills/`](skills/)** | Skills nativas y personalizadas del repositorio. |
+| ↳ [`pixel-art-wizard`](skills/pixel-art-wizard/SKILL.md) | Generación procedural de un mago pixel art animado lanzando un hechizo en Canvas 2D (HTML autocontenido, sin librerías). Incluye [`example.html`](skills/pixel-art-wizard/example.html). |
 | **[`scenario-skills/`](scenario-skills/)** | Más de 60 skills y agentes enfocados en flujos creativos con IA: generación de texturas, sprites, skyboxes, audio, videos, análisis de modelos y automatizaciones de Scenario. (*Fuente: [scenario-labs/skills](https://github.com/scenario-labs/skills)*) |
 | **[`blender-game-skills/`](blender-game-skills/)** | Skills y scripts de Python para procesamiento 3D profesional: conversión de imagen a 3D, horneado de mapas de texturas (baking), rigging, exportación optimizada para motores de juegos y control de calidad. (*Fuente: [majidmanzarpour/blender-game-skills](https://github.com/majidmanzarpour/blender-game-skills)*) |
 | **[`ideas/`](ideas/)** | Documentación de arquitecturas, experimentos y flujos de trabajo emergentes. Incluye guías conceptuales y recetas para futuras skills. |
