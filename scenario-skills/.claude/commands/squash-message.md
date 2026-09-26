@@ -1,0 +1,1 @@
+../../.agents/skills/skills-squash-message/SKILL.md
