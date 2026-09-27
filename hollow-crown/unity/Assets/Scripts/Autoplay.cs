@@ -1,0 +1,120 @@
+using UnityEngine;
+
+// Scripted / bot input for headless captures (trailers and visual checks).
+//   -autoplay                grind bot in the starting map
+//   -map <id> -level <n>     start directly in a map at a level
+//   -bossdemo                (legacy) same bot; use with -map glade
+public static class Autoplay
+{
+    public static bool BossDemo;
+    public static string StartMap;
+    public static int StartLevel = 1;
+    public static bool ClimbTest;
+    public static string StartClass;
+    public static string SkillTest;
+    public static bool Showcase;      // -showcase: trailer bot - flashiest skills first, infinite MP, can't be hurt   // -skilltest j|k|l|u (walk while casting) or tp (directional teleport)
+    static int lastConfirm;
+
+    static int[] ShowPri(string cls)
+    {
+        switch (cls)
+        {
+            case "hero": return new[] { 3, 1, 2, 0 };        // Worldreaver, Rush, Dragon Fury
+            case "archmage": return new[] { 2, 1, 3, 0 };    // Meteor, Blizzard, Ice Strike
+            case "bishop": return new[] { 1, 2, 0 };         // Angel Ray, Genesis
+            case "bowmaster": return new[] { 2, 1, 3, 0 };   // Hurricane, Power Shot, Arrow Bomb
+            default: return new[] { 1, 2, 0 };               // Avenger, Assassinate
+        }
+    }
+
+    public static Inp At(int frame)
+    {
+        var i = new Inp();
+        var G = Game.I; var P = G.player;
+        if (G.dialog.Open || G.shop.Open) { if (frame - lastConfirm > 40) { i.confirm = true; lastConfirm = frame; } return i; }
+        if (G.state != Game.State.Play || P.dead || frame < 60) return i;
+        var D = Stats.D;
+        if (SkillTest != null)
+        {
+            int f = frame - 60;
+            if (SkillTest == "tp")
+            {
+                int ph = f % 70;
+                int step = (f / 70) % 4;       // up, right, down, left
+                if (ph == 10) i.jump = true;
+                if (ph == 22) { i.jump = true; i.up = step == 0; i.right = step == 1; i.down = step == 2; i.left = step == 3; }
+                return i;
+            }
+            bool right = (f / 180) % 2 == 0;
+            if (right) i.right = true; else i.left = true;
+            if (f % 60 == 20)
+            {
+                if (SkillTest == "j") i.attack = true; else if (SkillTest == "k") i.avenger = true;
+                else if (SkillTest == "l") i.assassin = true; else i.partner = true;
+            }
+            return i;
+        }
+        if (ClimbTest)   // walk to the first rope and climb it (visual check); Night Lord brings a Shadow Partner
+        {
+            if (frame == 64 && Stats.Unlocked(3)) { i.partner = true; return i; }
+            float rx = G.map.def.climbs[0].x - P.x;
+            if (Mathf.Abs(rx) > 2 && P.grounded) { if (rx > 0) i.right = true; else i.left = true; }
+            else i.up = true;
+            return i;
+        }
+        if (D.hp < Stats.MaxHp * 0.35f && D.red > 0 && frame % 30 == 0) i.pot1 = true;
+        if (D.mp < Stats.MaxMp * 0.2f && D.blue > 0 && frame % 30 == 15) i.pot2 = true;
+        if (Showcase) D.mp = Stats.MaxMp;
+        if ((!Showcase || P.ClassId == "nightlord") && Stats.Unlocked(3) && !P.CloneOn && P.cdSp <= 0 && D.mp >= Stats.SkillMp[3] && frame % 20 == 0) { i.partner = true; return i; }
+
+        // in town with a quest to pick up: walk to the elder and talk
+        if (G.map.def.id == "town" && D.qstate != 1 && Stats.Cur != null)
+        {
+            foreach (var n in G.map.npcs)
+                if (n.d.id == "elder")
+                {
+                    float dx0 = n.x - P.x;
+                    if (Mathf.Abs(dx0) > 8) { if (dx0 > 0) i.right = true; else i.left = true; }
+                    else if (frame % 30 == 0) i.upPress = true;
+                    return i;
+                }
+        }
+        // pick the nearest living target, preferring the same height
+        ITarget best = null; float bd = 1e9f;
+        foreach (var t in G.targets)
+        {
+            if (!t.Active) continue;
+            float dx = t.CentreX(t.BaseY) - P.x, dy = Mathf.Abs(t.BaseY - P.y);
+            float score = Mathf.Abs(dx) + dy * 4;
+            if (score < bd) { bd = score; best = t; }
+        }
+        if (best == null) { i.right = (frame / 240) % 2 == 0; i.left = !i.right; return i; }
+        float ddx = best.CentreX(best.BaseY) - P.x; int want = ddx >= 0 ? 1 : -1; float ad = Mathf.Abs(ddx);
+        float ddy = best.BaseY - P.y;
+        if (ddy > 20 && frame % 50 == 0) i.jump = true;                        // target above: hop up
+        if (ddy < -20 && P.grounded && frame % 80 == 0) { i.down = true; i.jump = true; }  // below: drop through
+        bool wall = P.x < G.map.MinX + 12 || P.x > G.map.MaxX - 12;
+        if (ad > 80) { if (want > 0) i.right = true; else i.left = true; }
+        else if (ad < 18 && !wall) { if (want > 0) i.left = true; else i.right = true; }
+        else if (P.face != want) { if (want > 0) i.right = true; else i.left = true; }
+        else if (Showcase)
+        {
+            foreach (int sl in ShowPri(P.ClassId))
+            {
+                if (sl == 0) { if (P.cdThrow <= 0) i.attack = true; break; }
+                float cd = sl == 1 ? P.cdAv : sl == 2 ? P.cdAs : P.cdSp;
+                if (!Stats.Unlocked(sl) || cd > 0) continue;
+                if (sl == 1) i.avenger = true; else if (sl == 2) i.assassin = true; else i.partner = true;
+                break;
+            }
+        }
+        else
+        {
+            if (Stats.Unlocked(2) && P.cdAs <= 0 && D.mp >= Stats.SkillMp[2] && frame % 7 == 0) i.assassin = true;
+            else if (Stats.Unlocked(1) && P.cdAv <= 0 && D.mp >= Stats.SkillMp[1] && frame % 5 == 0) i.avenger = true;
+            else if (P.cdThrow <= 0) i.attack = true;
+        }
+        if (frame % 131 == 0 && !i.jump) i.jump = true;
+        return i;
+    }
+}
